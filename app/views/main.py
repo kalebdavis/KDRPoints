@@ -1,12 +1,14 @@
 #!flask/bin/python
 from app import db, app, lm, google
 from datetime import datetime
-from flask import render_template, url_for, session, g, redirect, Blueprint, flash, abort
+from flask import render_template, url_for, session, g, redirect, Blueprint, flash, abort, request
 from flask.ext.login import logout_user, login_user, current_user, current_user, login_required
 from app.models import *
 from config import USER_ROLES
 from app.forms import *
+from app.email import send_email
 from sqlalchemy import desc
+from urlparse import urlparse
 
 main = Blueprint('main', __name__)
 
@@ -69,7 +71,7 @@ def authorized(response):
         return redirect(url_for('main.index'))
     bro = Brother.query.filter_by(email=me.data['email']).first()
     if bro is None:
-        bro = Brother(name=me.data['name'], nickname="", email=me.data['email'], position="None", pin=0)
+        bro = Brother(name=me.data['name'], nickname="", email=me.data['email'], position=None, pin=0)
         db.session.add(bro)
         db.session.commit()
     login_user(bro, remember = False)
@@ -213,9 +215,25 @@ def award(id):
 def service():
     form = ServiceForm()
     if form.validate_on_submit():
-        serv = Service(brother_id=g.user.id, start=form.start.data, end=form.end.data, info=form.info.data, name=form.name.data, semester_id=g.current_semester.id)
+        serv = Service(brother_id=g.user.id,
+                       start=form.start.data,
+                       end=form.end.data,
+                       info=form.info.data,
+                       name=form.name.data,
+                       semester_id=g.current_semester.id)
         db.session.add(serv)
         db.session.commit()
+        svcid = Position.query.filter_by(name="Service Chair").one()
+        svcchair = Brother.query.filter_by(position_id=svcid.id).one()
+        path = urlparse(request.base_url)
+        body = "{} has submitted service hours for approval. Go to {}://{}{}?id={} to review.".format(
+                g.user.name, path.scheme, path.netloc, url_for('service.edit_view'), serv.id)
+        send_email("KDRPoints",
+                   "Service hours submitted by " + g.user.name,
+                    [svcchair.email],
+                    body,
+                    body)
+
         flash("Service submitted successfully", category="good")
     else:
         flash_wtferrors(form)

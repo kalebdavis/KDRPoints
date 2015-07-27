@@ -28,6 +28,11 @@ Make a new file in the root of the project (where requirements.txt is) called ap
 5. A random key: Can be whatever (md5 sum something and paste it in there)
 6. The Google Consumer ID
 7. The Google Consumer Secret
+8. Mail server (smtp.google.com)
+9. Mail port (443)
+10. Use ssl or not (True)
+11. Email address
+12. Email password
 
 Next, start up a virtualenv with the command: virtualenv flask
 
@@ -69,11 +74,16 @@ Log in with your kdrib Google account
 Run the following to upgrade yourself to admin:
 
 ```
-echo "use kdrpoints;update brother set role=2;" | mysql -u kdrpoints -p
+mysql -u kdrpoints -p
+use kdrpoints
+insert into position values(1, "Admin", 2);
+update brother set position_id=1;
 ```
 OR
 ```
-sqlite3 app.db 'update brother set role=2;'
+sqlite3 app.db
+insert into position values(1, "Admin", 2);
+update brother set position_id=1;
 ```
 
 Now you can access the admin panel as a superadmin

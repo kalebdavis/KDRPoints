@@ -5,10 +5,12 @@ from flask.ext.login import current_user
 from flask import redirect, url_for, flash
 from config import USER_ROLES
 from wtforms.validators import NumberRange
+from app.email import send_email
+from wtforms import SelectField
 
 class ProtectedIndexView(AdminIndexView):
     def is_accessible(self):
-        if current_user.is_authenticated() and current_user.role > 0:
+        if current_user.is_authenticated() and not current_user.is_normal_user():
             return True
         return False
 
@@ -19,8 +21,8 @@ class ProtectedIndexView(AdminIndexView):
 
 class ProtectedModelView(ModelView):
     def is_accessible(self):
-        if current_user.is_authenticated() and current_user.role > 0:
-            if current_user.role == 1:
+        if current_user.is_authenticated() and not current_user.is_normal_user():
+            if current_user.is_chair():
                 self.can_create = False
                 self.can_delete = False
                 self.can_edit = False
@@ -34,12 +36,12 @@ class ProtectedModelView(ModelView):
 
 class AdminModelView(ProtectedModelView):
     def is_visible(self):
-        if current_user.is_authenticated() and current_user.role != 2:
-            return False
-        return True
+        if current_user.is_authenticated() and current_user.is_admin():
+            return True
+        return False
 
     def is_accessible(self):
-        if current_user.is_authenticated() and current_user.role == 2:
+        if current_user.is_authenticated() and current_user.is_admin():
             return True
         return False
 
@@ -49,9 +51,21 @@ class BrotherModelView(AdminModelView):
     can_create = False
     column_display_pk = True
     column_hide_backrefs = False
-    form_excluded_columns = ('points', 'awards', 'events', 'studyhours', 'service', 'last_seen')
+    form_excluded_columns = ('points', 'awards',
+                             'events', 'studyhours',
+                             'service', 'last_seen',
+                             'email')
     def __init__(self, session):
         super(BrotherModelView, self).__init__(models.Brother, session)
+
+class PositionModelView(AdminModelView):
+    choices = [ (int(USER_ROLES[i]), i) for i in USER_ROLES.keys() ]
+    form_overrides = dict(permission=SelectField)
+    form_args = dict(permission=dict(choices=choices,
+                                     validators=[NumberRange(min=0, max=2)],
+                                     coerce=int))
+    def __init__(self, session):
+        super(PositionModelView, self).__init__(models.Position, session)
 
 class FamilyModelView(AdminModelView):
     can_create = False
@@ -137,11 +151,51 @@ class ServiceModelView(ProtectedModelView):
         super(ServiceModelView, self).__init__(models.Service, session)
 
     def is_accessible(self):
-        if current_user.is_authenticated() and ((current_user.role == 1 and "service" in current_user.position.lower()) or current_user.role == 2):
+        if current_user.is_authenticated() and \
+                ("service" in current_user.position.name.lower() or current_user.is_admin()):
             self.can_create = True
             self.can_edit = True
             self.can_delete = True
             return True
         return False
 
+    def on_model_change(self, form, model, created):
+        if form.approved.data:
+            semester = models.Semester.query.filter_by(current=True).one()
+            donehrs = model.brother.data.total_service_hours(semester)
+            svchrs = (form.end.data - form.start.data).seconds/3600.0
+            remaining = 15 - donehrs
 
+            svcmsg ="The service hours you reported for '{}' have just been approved by {}. ".format(
+                form.name.data,
+                current_user.name)
+            if remaining > 0:
+                svcmsg += "You have {} service hour(s) left to do this semester (out of 15).".format(remaining)
+            else:
+                svcmsg += "You have completed your service hours for this semester! You currently have {}.".format(donehrs)
+            send_email("Service Chair (points)",
+                       str(svchrs) + " service hour" +
+                       ("" if svchrs == 1 else "s") +
+                       " have been approved!",
+                       [form.brother.data.email],
+                       svcmsg,
+                       svcmsg)
+
+    def on_model_delete(self, model):
+        semester = models.Semester.query.filter_by(current=True).one()
+        donehrs = model.brother.total_service_hours(semester)
+        svchrs = (model.end - model.start).seconds/3600.0
+        remaining = 15 - donehrs
+        svcmsg ="The {} service hour(s) you reported for '{}' have been denied by {}. If you want to know why you should ask them about it! ".format(
+            svchrs,
+            model.name,
+            current_user.name)
+        if remaining > 0:
+            svcmsg += "You have {} service hour(s) left to do this semester (out of 15).".format(remaining)
+        else:
+            svcmsg += "You have completed your service hours for this semester! You currently have {}.".format(donehrs)
+        send_email("Service Chair (points)",
+                    "Service hours have been DENIED!",
+                    [model.brother.email],
+                    svcmsg,
+                    svcmsg)

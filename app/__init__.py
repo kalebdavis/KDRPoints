@@ -7,6 +7,7 @@ from flask_admin.contrib.sqla import ModelView
 from config import GOOGLE_CONSUMER_KEY, GOOGLE_CONSUMER_SECRET
 from flask.ext.admin import Admin
 from flask_admin.base import MenuLink
+from flask.ext.mail import Mail
 
 app = Flask(__name__)
 app.config.from_object('config')
@@ -30,6 +31,8 @@ lm = LoginManager()
 lm.init_app(app)
 lm.login_view = 'main.login'
 
+mail = Mail(app)
+
 from app import models
 db.create_all()
 db.session.commit()
@@ -42,6 +45,7 @@ admin.add_view(adminviews.AwardModelView(db.session))
 admin.add_view(adminviews.ServiceModelView(db.session))
 admin.add_view(adminviews.PointsModelView(db.session))
 admin.add_view(adminviews.BrotherModelView(db.session))
+admin.add_view(adminviews.PositionModelView(db.session))
 admin.add_view(adminviews.FamilyModelView(db.session))
 admin.add_view(adminviews.SemesterModelView(db.session))
 app.register_blueprint(main.main)
