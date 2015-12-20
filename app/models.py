@@ -7,6 +7,11 @@ events = db.Table('events',
     db.Column('brother_id', db.Integer, db.ForeignKey('brother.id'))
 )
 
+active_semesters = db.Table('active_semesters',
+    db.Column('semester_id', db.Integer, db.ForeignKey('semester.id')),
+    db.Column('brother_id', db.Integer, db.ForeignKey('brother.id'))
+)
+
 awards = db.Table('awards',
     db.Column('award_id', db.Integer, db.ForeignKey('award.id')),
     db.Column('brother_id', db.Integer, db.ForeignKey('brother.id'))
@@ -30,6 +35,7 @@ class Brother(db.Model):
     points = db.relationship('OtherPoints', secondary=points, backref = 'brothers', lazy = 'dynamic')
     awards = db.relationship('Award', secondary=awards, backref = 'brothers', lazy = 'dynamic')
     events = db.relationship('Event', secondary=events, backref='brothers', lazy='dynamic')
+    active_semesters = db.relationship('Semester', secondary=active_semesters, backref='active_brothers', lazy='dynamic')
     service = db.relationship('Service')
     studyhours = db.relationship('StudyHours')
     family_id = db.Column(db.Integer, db.ForeignKey('family.id'))
@@ -56,11 +62,17 @@ class Brother(db.Model):
             return True
         return False
 
+    def is_service_chair(self):
+        if self.position is None:
+            return False
+        if "service" in self.position.name.lower():
+            return True
+
     def total_service_hours(self, semester):
         total = 0
         for serv in self.service:
             if serv.semester == semester and serv.approved is True:
-                total += (serv.end - serv.start).seconds/3600.0
+                total += ((serv.end - serv.start).seconds/3600.0)*float(serv.weight)
         return total
 
     def is_authenticated(self):
@@ -103,9 +115,15 @@ class Family(db.Model):
 
     def get_points(self, semester):
         total = 0
+        div = 0
         for b in self.brothers:
-            total += b.get_all_points(semester)
-        return total
+            if b.active:
+                div += 1
+                total += b.get_all_points(semester)
+        if div:
+            return total/len(self.brothers)
+        else:
+            return 0
 
     def __str__(self):
         return self.name
@@ -118,12 +136,11 @@ class Semester(db.Model):
     year = db.Column(db.Integer, index = True, nullable=False)
     season = db.Column(db.String(20), index = True, nullable=False )
     current = db.Column(db.Boolean, default = False, nullable=False )
+    linkname = db.Column(db.String(20))
+    ended = db.Column(db.Boolean, default=False, nullable=False)
 
     def get_name(self):
         return "{} {}".format(self.season, self.year)
-
-    def get_linkname(self):
-        return "{}{}".format(self.season, self.year)
 
     def __str__(self):
         return '{}'.format(self.get_name())
@@ -194,7 +211,7 @@ class Event(db.Model):
 
 class Award(db.Model):
     id = db.Column(db.Integer, primary_key = True)
-    name = db.Column(db.String(20), index = True, nullable=False)
+    name = db.Column(db.String(50), index = True, nullable=False)
     icon = db.Column(db.String(50), nullable=False)
     semester = db.relationship("Semester")
     semester_id = db.Column(db.Integer, db.ForeignKey('semester.id'), nullable=False)
@@ -222,6 +239,14 @@ class Service(db.Model):
     brother_id = db.Column(db.Integer, db.ForeignKey('brother.id'), nullable=False)
     brother = db.relationship("Brother")
     approved = db.Column(db.Boolean, default=False)
+    email_sent = db.Column(db.Boolean, default=False)
+    weight = db.Column(db.Float, default=1.0, nullable=False)
+
+    def get_weighted_hours(self):
+        return ((self.end - self.start).seconds/3600.0)*float(self.weight)
+
+    def get_unweighted_hours(self):
+        return (self.end - self.start).seconds/3600.0
 
     def __str__(self):
         return self.name

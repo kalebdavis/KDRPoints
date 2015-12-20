@@ -1,16 +1,17 @@
 from app import app, db, models
 from flask.ext.admin import AdminIndexView
-from flask_admin.contrib.sqla import ModelView
+from flask.ext.admin.contrib.sqla.view import ModelView, func
 from flask.ext.login import current_user
 from flask import redirect, url_for, flash
 from config import USER_ROLES
 from wtforms.validators import NumberRange
 from app.email import send_email
 from wtforms import SelectField
+from datetime import datetime
 
 class ProtectedIndexView(AdminIndexView):
     def is_accessible(self):
-        if current_user.is_authenticated() and not current_user.is_normal_user():
+        if current_user.is_authenticated and not current_user.is_normal_user():
             return True
         return False
 
@@ -21,11 +22,7 @@ class ProtectedIndexView(AdminIndexView):
 
 class ProtectedModelView(ModelView):
     def is_accessible(self):
-        if current_user.is_authenticated() and not current_user.is_normal_user():
-            if current_user.is_chair():
-                self.can_create = False
-                self.can_delete = False
-                self.can_edit = False
+        if current_user.is_authenticated and not current_user.is_normal_user():
             return True
         return False
 
@@ -36,12 +33,12 @@ class ProtectedModelView(ModelView):
 
 class AdminModelView(ProtectedModelView):
     def is_visible(self):
-        if current_user.is_authenticated() and current_user.is_admin():
+        if current_user.is_authenticated and current_user.is_admin():
             return True
         return False
 
     def is_accessible(self):
-        if current_user.is_authenticated() and current_user.is_admin():
+        if current_user.is_authenticated and current_user.is_admin():
             return True
         return False
 
@@ -74,9 +71,7 @@ class FamilyModelView(AdminModelView):
         super(FamilyModelView, self).__init__(models.Family, session)
 
 class EventModelView(ProtectedModelView):
-    can_create = True
-    can_delete = True
-    can_edit = True
+    column_default_sort = ('timestamp', True)
     semester = models.Semester.query.filter_by(current=True).first()
     form_args = dict(points=dict(validators=[NumberRange(min=0)]),
                      semester=dict(default=semester),
@@ -85,10 +80,16 @@ class EventModelView(ProtectedModelView):
     def __init__(self, session):
         super(EventModelView, self).__init__(models.Event, session)
 
+    def get_query(self):
+        semester = models.Semester.query.filter_by(current=True).one()
+        return self.session.query(self.model).filter(self.model.semester==semester)
+
+    def get_count_query(self):
+        semester = models.Semester.query.filter_by(current=True).one()
+        return self.session.query(func.count('*')).filter(self.model.semester==semester)
+
 class PointsModelView(ProtectedModelView):
-    can_create = True
-    can_delete = True
-    can_edit = True
+    column_default_sort = ('timestamp', True)
     semester = models.Semester.query.filter_by(current=True).first()
     form_args = dict(points=dict(validators=[NumberRange(min=0)]),
                      semester=dict(default=semester),
@@ -98,26 +99,41 @@ class PointsModelView(ProtectedModelView):
     def __init__(self, session):
         super(PointsModelView, self).__init__(models.OtherPoints, session)
 
+    def get_query(self):
+        semester = models.Semester.query.filter_by(current=True).one()
+        return self.session.query(self.model).filter(self.model.semester==semester)
+
+    def get_count_query(self):
+        semester = models.Semester.query.filter_by(current=True).one()
+        return self.session.query(func.count('*')).filter(self.model.semester==semester)
+
 class SemesterModelView(AdminModelView):
-    can_delete = False
+    form_excluded_columns = ('linkname')
     column_default_sort = ('current', True)
+    form_args = dict(year=dict(validators=[NumberRange(min=2014, max=2100)]))
+    choices = [ (i, i) for i in ["Fall", "Spring"] ]
+    form_overrides = dict(season=SelectField)
+    form_args = dict(season=dict(choices=choices),
+                     year=dict(default=datetime.utcnow().year))
 
-    def on_model_change(self, form, model):
-        sems = model.query.filter_by(current=True)
-        for sem in sems:
-            if sem is not model:
-                sem.current = False
-                db.session.add(sem)
-                db.session.commit()
-
+    def on_model_change(self, form, model, is_created):
+        model.linkname = (model.season + str(model.year)).lower()
+        db.session.add(model)
+        if model.current:
+            sems = model.query.filter_by(current=True)
+            for sem in sems:
+                if sem is not model:
+                    sem.current = False
+                    if not sem.ended:
+                        sem.active_brothers = models.Brother.query.filter_by(active=True).all()
+                    sem.ended = True
+                    db.session.add(sem)
+        db.session.commit()
 
     def __init__(self, session):
         super(SemesterModelView, self).__init__(models.Semester, session)
 
 class AwardModelView(ProtectedModelView):
-    can_create = True
-    can_delete = True
-    can_edit = True
     form_args = dict(icon=dict(cols=5))
     form_widget_args = {
         'color': {
@@ -132,6 +148,7 @@ class AwardModelView(ProtectedModelView):
     }
     edit_template = 'admin/editaward.html'
     create_template = 'admin/createaward.html'
+    column_default_sort = ('timestamp', True)
     semester = models.Semester.query.filter_by(current=True).first()
     form_args = dict(points=dict(validators=[NumberRange(min=0)]),
                      semester=dict(default=semester),
@@ -141,53 +158,73 @@ class AwardModelView(ProtectedModelView):
     def __init__(self, session):
         super(AwardModelView, self).__init__(models.Award, session)
 
+    def get_query(self):
+        semester = models.Semester.query.filter_by(current=True).one()
+        return self.session.query(self.model).filter(self.model.semester==semester)
+
+    def get_count_query(self):
+        semester = models.Semester.query.filter_by(current=True).one()
+        return self.session.query(func.count('*')).filter(self.model.semester==semester)
+
 class ServiceModelView(ProtectedModelView):
+    form_excluded_columns = ('email_sent')
+    column_exclude_list = ('email_sent')
     column_default_sort = ('approved')
     form_args = dict(brother=dict(query_factory=
-                        lambda: models.Brother.query.filter_by(active=True))
+                        lambda: models.Brother.query.filter_by(active=True)),
+                     weight=dict(default=1.0)
                      )
 
     def __init__(self, session):
         super(ServiceModelView, self).__init__(models.Service, session)
 
     def is_accessible(self):
-        if current_user.is_authenticated() and \
+        if current_user.is_authenticated and \
                 ("service" in current_user.position.name.lower() or current_user.is_admin()):
-            self.can_create = True
-            self.can_edit = True
-            self.can_delete = True
             return True
         return False
 
-    def on_model_change(self, form, model, created):
+    def on_model_change(self, form, model, is_created):
         if form.approved.data:
             semester = models.Semester.query.filter_by(current=True).one()
-            donehrs = model.brother.data.total_service_hours(semester)
+            donehrs = form.brother.data.total_service_hours(semester)
             svchrs = (form.end.data - form.start.data).seconds/3600.0
             remaining = 15 - donehrs
+            if not model.email_sent:
+                svcmsg ="The service hours you reported for '{}' have just been approved by {} (The weight for this service was {}). ".format(
+                    form.name.data,
+                    current_user.name,
+                    model.weight)
+                if remaining > 0:
+                    svcmsg += "You have {} service hour(s) left to do this semester (out of 15).".format(remaining)
+                else:
+                    svcmsg += "You have completed your service hours for this semester! You currently have {}.".format(donehrs)
+                send_email("Service Chair (points)",
+                        str(svchrs*float(model.weight)) + " service hour" +
+                        ("" if svchrs == 1 else "s") +
+                        " have been approved!",
+                        [form.brother.data.email],
+                        svcmsg,
+                        svcmsg)
+                model.email_sent = True
+                db.session.add(model)
+                db.session.commit()
+        else:
+            model.email_sent = False
+            db.session.add(model)
+            db.session.commit()
 
-            svcmsg ="The service hours you reported for '{}' have just been approved by {}. ".format(
-                form.name.data,
-                current_user.name)
-            if remaining > 0:
-                svcmsg += "You have {} service hour(s) left to do this semester (out of 15).".format(remaining)
-            else:
-                svcmsg += "You have completed your service hours for this semester! You currently have {}.".format(donehrs)
-            send_email("Service Chair (points)",
-                       str(svchrs) + " service hour" +
-                       ("" if svchrs == 1 else "s") +
-                       " have been approved!",
-                       [form.brother.data.email],
-                       svcmsg,
-                       svcmsg)
+
 
     def on_model_delete(self, model):
         semester = models.Semester.query.filter_by(current=True).one()
         donehrs = model.brother.total_service_hours(semester)
         svchrs = (model.end - model.start).seconds/3600.0
         remaining = 15 - donehrs
-        svcmsg ="The {} service hour(s) you reported for '{}' have been denied by {}. If you want to know why you should ask them about it! ".format(
+        svcmsg ="The {} ({}*{}) service hour(s) you reported for '{}' have been denied by {}. If you want to know why you should ask them about it! ".format(
+            svchrs*float(model.weight),
             svchrs,
+            float(model.weight),
             model.name,
             current_user.name)
         if remaining > 0:
@@ -199,3 +236,11 @@ class ServiceModelView(ProtectedModelView):
                     [model.brother.email],
                     svcmsg,
                     svcmsg)
+
+    def get_query(self):
+        semester = models.Semester.query.filter_by(current=True).one()
+        return self.session.query(self.model).filter(self.model.semester==semester)
+
+    def get_count_query(self):
+        semester = models.Semester.query.filter_by(current=True).one()
+        return self.session.query(func.count('*')).filter(self.model.semester==semester)

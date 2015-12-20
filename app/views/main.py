@@ -1,22 +1,26 @@
 #!flask/bin/python
 from app import db, app, lm, google
-from datetime import datetime
-from flask import render_template, url_for, session, g, redirect, Blueprint, flash, abort, request
+from datetime import datetime, timedelta
+from flask import render_template, url_for, session, g, redirect, Blueprint, flash, abort, request, make_response
 from flask.ext.login import logout_user, login_user, current_user, current_user, login_required
 from app.models import *
-from config import USER_ROLES
+from config import USER_ROLES, basedir
 from app.forms import *
 from app.email import send_email
 from sqlalchemy import desc
 from urlparse import urlparse
+from random import sample
+import os
 
 main = Blueprint('main', __name__)
 
 @main.before_request
 def before_request():
+    session.permanent = True
+    app.permanent_session_lifetime = timedelta(hours=24)
     g.user = current_user
     g.current_semester = Semester.query.filter_by(current=True).first()
-    if g.user.is_authenticated():
+    if g.user.is_authenticated:
         g.user.last_seen = datetime.utcnow()
         db.session.add(g.user)
         db.session.commit()
@@ -24,7 +28,7 @@ def before_request():
 @main.route('/')
 @main.route('/index')
 def index():
-    if g.user.is_authenticated():
+    if g.user.is_authenticated:
         name=g.user.name.split(" ")[0]
     else:
         name = "stranger"
@@ -40,7 +44,7 @@ def get_google_oauth_token():
 
 @main.route('/login')
 def login():
-    if g.user.is_authenticated():
+    if g.user.is_authenticated:
         flash("You are already logged in as {}.".format(g.user.email), category="warning")
         return redirect(url_for(".index"))
     session.pop('google_token', None)
@@ -74,7 +78,7 @@ def authorized(response):
         bro = Brother(name=me.data['name'], nickname="", email=me.data['email'], position=None, pin=0)
         db.session.add(bro)
         db.session.commit()
-    login_user(bro, remember = False)
+    login_user(bro, remember = True)
     if bro.pin == 0 or bro.family is None:
         return redirect(url_for('main.first_login'))
     return redirect(url_for("main.index"))
@@ -119,14 +123,14 @@ def attend():
     events = []
     if events is not None:
         events = [ (x.id, x.name) for x in events_query ]
-    if g.user.is_authenticated():
+    if g.user.is_authenticated:
         form.pin.data = g.user.pin
     form.event.choices = events
     if form.validate_on_submit():
         bro = Brother.query.filter_by(pin=form.pin.data).first()
         if bro is not None:
             event = Event.query.filter_by(id=form.event.data).first()
-            if not event.code_enable or form.code.data == event.code:
+            if not event.code_enable or form.code.data.strip().lower() == event.code.strip().lower():
                 if bro not in event.brothers:
                     event.brothers.append(bro)
                     db.session.commit()
@@ -155,13 +159,39 @@ def profile():
     all_items.sort(key=lambda x: x.timestamp, reverse=True)
     return render_template("profile.html", title="Profile", avgpoints=avgpoints, avgsvc=avgsvc, all_items=all_items[:10], Event=Event, Award=Award, OtherPoints=OtherPoints, isinstance=isinstance, form=form)
 
+@main.route('/allbrotherpoints/<username>')
+@login_required
+def allbrotherpoints(username):
+    user = Brother.query.filter_by(email=username + "@kdrib.org").first()
+    if not user or not g.user.is_admin():
+        abort(404)
+    all_items = (user.events.all() +
+                 user.awards.all() +
+                 user.points.all())
+    all_items.sort(key=lambda x: x.timestamp, reverse=True)
+    return render_template("allpoints.html",
+                           title="All Points - {}".format(user.name),
+                           all_items=all_items,
+                           Event=Event,
+                           Award=Award,
+                           OtherPoints=OtherPoints,
+                           isinstance=isinstance,
+                           user=user)
 
 @main.route('/allpoints')
 @login_required
 def allpoints():
-    all_items = g.user.events.filter_by(semester=g.current_semester).all() + g.user.awards.filter_by(semester=g.current_semester).all()+ g.user.points.filter_by(semester=g.current_semester).all()
+    all_items = (g.user.events.all() +
+                 g.user.awards.all() +
+                 g.user.points.all())
     all_items.sort(key=lambda x: x.timestamp, reverse=True)
-    return render_template("allpoints.html", title="All Points", all_items=all_items[:10], Event=Event, Award=Award, OtherPoints=OtherPoints, isinstance=isinstance)
+    return render_template("allpoints.html",
+                           title="All Points",
+                           all_items=all_items,
+                           Event=Event, Award=Award,
+                           OtherPoints=OtherPoints,
+                           isinstance=isinstance,
+                           user=g.user)
 
 @main.route('/founderscup')
 @login_required
@@ -211,11 +241,13 @@ def award(id):
     return render_template('award.html', title=award.name, award=award)
 
 @main.route('/service', methods = ['GET', 'POST'])
-@login_required
 def service():
     form = ServiceForm()
+    if g.user.is_authenticated:
+        form.pin.data = g.user.pin
     if form.validate_on_submit():
-        serv = Service(brother_id=g.user.id,
+        brother = Brother.query.filter_by(pin=form.pin.data).first()
+        serv = Service(brother_id=brother.id,
                        start=form.start.data,
                        end=form.end.data,
                        info=form.info.data,
@@ -223,21 +255,103 @@ def service():
                        semester_id=g.current_semester.id)
         db.session.add(serv)
         db.session.commit()
-        svcid = Position.query.filter_by(name="Service Chair").one()
-        svcchair = Brother.query.filter_by(position_id=svcid.id).one()
-        path = urlparse(request.base_url)
-        body = "{} has submitted service hours for approval. Go to {}://{}{}?id={} to review.".format(
-                g.user.name, path.scheme, path.netloc, url_for('service.edit_view'), serv.id)
-        send_email("KDRPoints",
-                   "Service hours submitted by " + g.user.name,
-                    [svcchair.email],
-                    body,
-                    body)
+        try:
+            svcid = Position.query.filter_by(name="Service Chair").first()
+            svcchair = Brother.query.filter_by(position_id=svcid.id).first()
+            path = urlparse(request.base_url)
+            body = "{} has submitted service hours for approval. Go to {}://{}{}?id={} to review.".format(
+                    brother.name, path.scheme, path.netloc, url_for('service.edit_view'), serv.id)
+            send_email("KDRPoints",
+                    "Service hours submitted by " + brother.name,
+                        [svcchair.email],
+                        body,
+                        body)
+        except: pass
 
         flash("Service submitted successfully", category="good")
     else:
         flash_wtferrors(form)
     return render_template('service.html', title="Service", form=form)
+
+@main.route('/allservice')
+@login_required
+def allservice():
+    return redirect(url_for('.allservicesemester',
+                            semester=g.current_semester.linkname))
+
+@main.route('/service/<semester>/download')
+@login_required
+def service_download(semester):
+    semesterobj = Semester.query.filter_by(linkname=semester).first()
+    bros = Brother.query.filter_by(active=True)
+    data = "Brother,Service Event,Weight,Unweighted,Weighted\n"
+    broSvcUn = brosSvcUn = broSvc = brosSvc = 0
+    for bro in bros:
+        broSvcUn = broSvc = 0
+        data += bro.name + ",,,,\n"
+        for svc in bro.service:
+            if svc.semester == semesterobj and svc.approved:
+                data += ",".join(["", svc.name, str(svc.weight), str(svc.get_unweighted_hours()), str(svc.get_weighted_hours())]) + "\n"
+                broSvcUn += svc.get_unweighted_hours()
+                broSvc += svc.get_weighted_hours()
+        brosSvcUn += broSvcUn
+        brosSvc += broSvc
+        data += ",".join(["", "Total", "", str(broSvcUn), str(broSvc)]) + "\n"
+    data += ",".join(["All brothers", "All Events", "", str(brosSvcUn), str(brosSvc)]) + "\n"
+    resp = make_response(data)
+    resp.headers["Content-Disposition"] = "attachment; filename=service_" + semester.lower() + ".csv"
+    return resp
+
+@main.route('/allservice/<semester>')
+@login_required
+def allservicesemester(semester):
+    semesterobj = Semester.query.filter_by(linkname=semester).first()
+    if g.user.is_normal_user() or not semesterobj:
+        abort(404)
+    brothers = Brother.query.filter_by(active=True)
+    return render_template('allservice.html',
+                           title="all service",
+                           brothers=brothers,
+                           semester=semesterobj)
+
+
+@main.route('/therandomizer', methods= ['GET', 'POST'])
+@login_required
+def randomizer():
+    randomizer = Randomizer()
+    brothers = []
+    if randomizer.validate_on_submit():
+        choices = Brother.query.filter_by(active=True).all()
+        try:
+            brothers = sample(choices, int(randomizer.number.data))
+        except:
+            flash("Try picking a smaller sample size", category="error")
+    return render_template("randomizer.html", title="here you go greg", form=randomizer, brothers=brothers)
+
+
+@main.route('/massattend', methods = ['GET', 'POST'])
+@login_required
+def massattend():
+    massattendform = MassAttendForm()
+    events_query = Event.query.filter_by(event_picker=True, semester=g.current_semester).all()
+    events = []
+    if events is not None:
+        events = [ (x.id, x) for x in events_query ]
+    massattendform.event.choices = events
+    brolist = ""
+    if massattendform.validate_on_submit():
+        event = Event.query.filter_by(id=massattendform.event.data).first()
+        for bro in massattendform.brothers.data:
+            bro = Brother.query.filter_by(id=bro).first()
+            if bro not in event.brothers:
+                brolist += bro.name + ", "
+                event.brothers.append(bro)
+                db.session.commit()
+            else:
+                flash("{} was already signed in".format(bro), category="warning")
+        flash("Brothers " + brolist[:-2] + " have been signed in")
+
+    return render_template('massattend.html', title="Mass Attend", form=massattendform)
 
 
 def __get_avg_points():
@@ -245,6 +359,8 @@ def __get_avg_points():
     if all_brothers.count() > 0:
         avgpoints = sum([ x.get_all_points(g.current_semester) for x in all_brothers ]) / all_brothers.count()
         avgsvc = sum([ x.total_service_hours(g.current_semester) for x in all_brothers ]) / all_brothers.count()
+        avgpoints = round(avgpoints, 2)
+        avgsvc = round(avgsvc, 2)
     else:
         avgpoints = 0
         avgsvc = 0

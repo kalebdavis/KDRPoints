@@ -4,7 +4,7 @@
 {% endblock %}
 {% block content %}
 <div class="row"><div class="col-md-12"><h1><i class="fa fa-recycle"></i> Report Service Hours</h1></div></div>
-<div class="row jumbotron">
+<div class="row jumbotron side-pad">
     <div class="col-md-12">
         <form action="" method="POST" name="service">
             {{form.hidden_tag()}}
@@ -15,12 +15,22 @@
             </div>
             <div class="row">
                 <div class="col-md-12">
-                    <h5>{{form.start.label}} </h5>{{form.start}}<button type="button" id="startpicker" class="btn fa fa-calendar"></button>
+                    <h5>{{form.pin.label}} </h5>
+                    {% if g.user.is_authenticated %}
+                    {{form.pin(size=5, disabled=True)}} Logged in
+                    {% else %}
+                    {{form.pin(size=5)}}
+                    {% endif %}
                 </div>
             </div>
             <div class="row">
                 <div class="col-md-12">
-                    <h5>{{form.end.label}} </h5>{{form.end}}<button type="button" id="endpicker" class="btn fa fa-calendar"></button>
+                    <h5>{{form.start.label}} </h5>{{form.start(readonly=True)}}<button type="button" id="startpicker" class="btn fa fa-calendar"></button>
+                </div>
+            </div>
+            <div class="row">
+                <div class="col-md-12">
+                    <h5>{{form.end.label}} </h5>{{form.end(readonly=True)}}<button type="button" id="endpicker" class="btn fa fa-calendar"></button>
                 </div>
             </div>
             <div class="row">
@@ -43,20 +53,22 @@ $(function() {
         format: 'MM/DD/YYYY h:mm A',
         timePicker: true,
         opens: 'center',
-        timePickerIncrement: 15
+        timePickerIncrement: 15,
+        startDate: $('#end').val()
     });
     $('#startpicker').daterangepicker({
         singleDatePicker: true,
         format: 'MM/DD/YYYY h:mm A',
         timePicker: true,
         opens: 'center',
-        timePickerIncrement: 15
+        timePickerIncrement: 15,
+        startDate: $('#start').val()
     });
     $('#startpicker').on('apply.daterangepicker', function(ev, picker) {
-    $('#start').val(picker.startDate.format('MM/DD/YYYY h:mm A'));
+        $('#start').val(picker.startDate.format('MM/DD/YYYY h:mm A'));
     });
     $('#endpicker').on('apply.daterangepicker', function(ev, picker) {
-    $('#end').val(picker.startDate.format('MM/DD/YYYY h:mm A'));
+        $('#end').val(picker.startDate.format('MM/DD/YYYY h:mm A'));
     });
 });
 </script>

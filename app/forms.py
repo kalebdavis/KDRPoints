@@ -1,5 +1,5 @@
 from flask.ext.wtf import Form
-from wtforms import TextField, SubmitField, SelectField, IntegerField, widgets, HiddenField, BooleanField, DateTimeField
+from wtforms import TextField, SubmitField, SelectField, IntegerField, widgets, HiddenField, BooleanField, DateTimeField, SelectMultipleField
 from wtforms.fields import TextAreaField
 from wtforms.validators import DataRequired, ValidationError, Length, NumberRange
 from datetime import datetime, timedelta
@@ -63,6 +63,7 @@ class ServiceForm(Form):
     name = TextField('Event Name', validators=[DataRequired(), Length(max=50)])
     start = DateTimeField('Start Time', validators=[DataRequired()], format='%m/%d/%Y %I:%M %p', default=roundTime())
     end = DateTimeField('End Time', validators=[DataRequired()], format='%m/%d/%Y %I:%M %p', default=roundTime())
+    pin = IntegerField('Pin', validators=[DataRequired()], default="")
     info = TextAreaField('Additional info')
     submit = SubmitField('submit')
 
@@ -75,3 +76,23 @@ class ServiceForm(Form):
         if self.end.data <= self.start.data:
             raise ValidationError("The end must be after the beginning")
 
+    def validate_pin(self, field):
+        if self.pin.data <= 0:
+            raise ValidationError("Invalid PIN entered")
+        if not self.pin.data in [ x.pin for x in Brother.query.all() ]:
+            raise ValidationError("The PIN number does not exist in the database")
+
+
+class Randomizer(Form):
+    number = TextField("Number of Brothers", validators=[DataRequired(), NumberRange(min=1)])
+    submit = SubmitField('Go!')
+
+
+class MassAttendForm(Form):
+    brothers = [ (x.id, x.name) for x in sorted(Brother.query.filter_by(active=True), key=lambda x: x.name) ]
+    event = SelectField('Event', choices=[], coerce=int)
+    brothers = SelectMultipleField("Brothers", choices=brothers, coerce=int, option_widget=widgets.CheckboxInput())
+    submit = SubmitField("Attend")
+
+    def validate(self): #brothers field fails check because object, just work around for now
+        return True
