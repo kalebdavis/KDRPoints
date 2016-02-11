@@ -78,7 +78,7 @@ def authorized(response):
         bro = Brother(name=me.data['name'], nickname="", email=me.data['email'], position=None, pin=0)
         db.session.add(bro)
         db.session.commit()
-    login_user(bro, remember = True)
+    login_user(bro, remember = False)
     if bro.pin == 0 or bro.family is None:
         return redirect(url_for('main.first_login'))
     return redirect(url_for("main.index"))
@@ -308,7 +308,9 @@ def allservicesemester(semester):
     semesterobj = Semester.query.filter_by(linkname=semester).first()
     if g.user.is_normal_user() or not semesterobj:
         abort(404)
-    brothers = Brother.query.filter_by(active=True)
+    brothers=semesterobj.active_brothers
+    if semesterobj == g.current_semester:
+        brothers = Brother.query.filter_by(active=True)
     return render_template('allservice.html',
                            title="all service",
                            brothers=brothers,
@@ -338,21 +340,55 @@ def massattend():
     if events is not None:
         events = [ (x.id, x) for x in events_query ]
     massattendform.event.choices = events
-    brolist = ""
+    brolist = []
     if massattendform.validate_on_submit():
         event = Event.query.filter_by(id=massattendform.event.data).first()
         for bro in massattendform.brothers.data:
             bro = Brother.query.filter_by(id=bro).first()
             if bro not in event.brothers:
-                brolist += bro.name + ", "
+                brolist.append(bro)
                 event.brothers.append(bro)
                 db.session.commit()
             else:
                 flash("{} was already signed in".format(bro), category="warning")
-        flash("Brothers " + brolist[:-2] + " have been signed in")
+        flash("Brothers " + ", ".join(b.name for b in brolist) + " have been signed in")
 
     return render_template('massattend.html', title="Mass Attend", form=massattendform)
 
+@main.route('/signupsheets')
+@login_required
+def signupsheets():
+    sheetz = SignUpSheet.query.filter_by(semester=g.current_semester).all()
+    return render_template('signupsheets.html', title="Sign Up Sheets", sheets=sheetz)
+
+@main.route('/signup/<int:id>', methods=['GET', 'POST'])
+@login_required
+def signup(id):
+    form = AddOrDeleteFromSignup()
+    sheet = SignUpSheet.query.filter_by(id=id).first_or_404()
+    if request.method == 'POST':
+        try:
+            role = SignUpRole.query.filter_by(id=form.role_id.data).one()
+        except:
+            role = None
+        if sheet.closed or not role:
+            flash("This signup sheet is closed for modification or the role does not exist")
+        else:
+            if g.user in role.brothers:
+                role.brothers.remove(g.user)
+            else:
+                if len(role.brothers) < role.max:
+                    role.brothers.append(g.user)
+                else:
+                    flash("No more brothers can sign up for this role.", category='error')
+            db.session.add(role)
+            db.session.commit()
+    return render_template("signup.html", title="Sign Up - "+sheet.name, sheet=sheet, form=form)
+
+@main.route('/calendar')
+@login_required
+def calendar():
+    return render_template('calendar.html', title="KDRIB Calendar")
 
 def __get_avg_points():
     all_brothers = Brother.query.filter_by(active=True)

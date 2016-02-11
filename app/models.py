@@ -1,9 +1,15 @@
 from app import db
 from config import USER_ROLES
 from datetime import datetime
+from sqlalchemy.ext.hybrid import hybrid_property
 
 events = db.Table('events',
     db.Column('event_id', db.Integer, db.ForeignKey('event.id')),
+    db.Column('brother_id', db.Integer, db.ForeignKey('brother.id'))
+)
+
+signups = db.Table('signups',
+    db.Column('signup_id', db.Integer, db.ForeignKey('signuprole.id')),
     db.Column('brother_id', db.Integer, db.ForeignKey('brother.id'))
 )
 
@@ -35,6 +41,7 @@ class Brother(db.Model):
     points = db.relationship('OtherPoints', secondary=points, backref = 'brothers', lazy = 'dynamic')
     awards = db.relationship('Award', secondary=awards, backref = 'brothers', lazy = 'dynamic')
     events = db.relationship('Event', secondary=events, backref='brothers', lazy='dynamic')
+    signups = db.relationship('SignUpRole', secondary=signups, backref='brothers', lazy='dynamic')
     active_semesters = db.relationship('Semester', secondary=active_semesters, backref='active_brothers', lazy='dynamic')
     service = db.relationship('Service')
     studyhours = db.relationship('StudyHours')
@@ -107,7 +114,17 @@ class Brother(db.Model):
         for a in self.awards:
             if a.semester is semester:
                 total += a.points
+        total += self.total_service_hours(semester) * 5
         return total
+
+    #poc test function to show what we can do now :)
+    def get_missed_events(self, semester):
+        l = set()
+        for s in self.signups:
+            if s.signupsheet.semester == semester and s.signupsheet.event and self in s.signupsheet.signed_up_didnt_attend(s.signupsheet.event):
+                l.add(s.signupsheet.event)
+        return list(l)
+
 
 class Family(db.Model):
     id = db.Column(db.Integer, primary_key = True)
@@ -115,13 +132,22 @@ class Family(db.Model):
 
     def get_points(self, semester):
         total = 0
-        div = 0
+        sembros = set()
         for b in self.brothers:
             if b.active:
-                div += 1
+                sembros.add(b)
                 total += b.get_all_points(semester)
-        if div:
-            return total/len(self.brothers)
+        if semester.season == "Spring":
+            try:
+                fallsemester = Semester.query.filter_by(season="Fall", year=semester.year-1).one()
+                for b in fallsemester.active_brothers:
+                    if b.family is self:
+                        sembros.add(b)
+                        total += b.get_all_points(fallsemester)
+            except: pass
+
+        if len(sembros):
+            return total/len(sembros)
         else:
             return 0
 
@@ -138,6 +164,7 @@ class Semester(db.Model):
     current = db.Column(db.Boolean, default = False, nullable=False )
     linkname = db.Column(db.String(20))
     ended = db.Column(db.Boolean, default=False, nullable=False)
+    required_service = db.Column(db.Integer, default=15)
 
     def get_name(self):
         return "{} {}".format(self.season, self.year)
@@ -279,6 +306,58 @@ class Position(db.Model):
 
     def __repr__(self):
         return "<{}>".format(self.name)
+
+    def __str__(self):
+        return self.name
+
+
+class SignUpSheet(db.Model):
+    __tablename__ = 'signupsheet'
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(60), nullable=False)
+    description = db.Column(db.String(1000))
+    semester = db.relationship("Semester", backref="signupsheets")
+    semester_id = db.Column(db.Integer, db.ForeignKey('semester.id'), nullable=False)
+    event = db.relationship("Event", backref='signupsheet')
+    event_id = db.Column(db.Integer, db.ForeignKey('event.id'), nullable=True)
+    closed = db.Column(db.Boolean)
+    __table_args__ = (db.UniqueConstraint('name', 'semester_id', name='_name_semester_uc'),)
+
+    @hybrid_property
+    def available_role_list_print(self):
+        return ", ".join([x.name for x in self.roles if len(x.brothers) < x.max])
+
+    def signed_up_brothers(self):
+        l = []
+        for r in self.roles:
+            l = list(set(l) | set(r.brothers))
+        return l
+
+    def signed_up_attended(self, event):
+        return list(set(self.signed_up_brothers()) & set(event.brothers))
+
+    def signed_up_didnt_attend(self, event):
+        return list(set(self.signed_up_brothers()) - set(event.brothers))
+
+    def didnt_sign_up_attended(self, event):
+        return list(set(event.brothers) - set(self.signed_up_brothers()))
+
+    def __str__(self):
+        return self.name
+
+class SignUpRole(db.Model):
+    __tablename__ = 'signuprole'
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(40), nullable=False)
+    min = db.Column(db.Integer)
+    max = db.Column(db.Integer)
+    signupsheet_id = db.Column(db.Integer, db.ForeignKey('signupsheet.id'), nullable=False)
+    signupsheet = db.relationship("SignUpSheet", backref='roles')
+    __table_args__ = (db.UniqueConstraint('signupsheet_id', 'name', name='_sheetid_name_uc'),)
+
+    @hybrid_property
+    def brother_list_print(self):
+        return ", ".join([x.name for x in self.brothers])
 
     def __str__(self):
         return self.name

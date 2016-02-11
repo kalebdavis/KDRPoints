@@ -4,7 +4,9 @@ html {
 }
 
 .jumbotron {
-    padding-top: 15px;
+    padding-top: 1em;
+    padding-left: 1em;
+    padding-right: 1em;
 }
 
 body {
@@ -37,11 +39,6 @@ body {
 .side-pad {
     margin-left: 0.3em;
     margin-right: 0.3em;
-}
-
-.jmargins {
-    margin-left: 1em;
-    margin-right: 1em;
 }
 
 .row-eq-height {
@@ -87,3 +84,42 @@ body {
 .navbar-brand {
     padding-left: 1.5em;
 }
+
+.force-bottom {
+    padding-bottom: 0px;
+}
+
+.service-dropdown {
+    padding-left: 7px;
+    padding-right: 7px;
+}
+
+/* Modifications for Flatly theme */
+.navbar-inverse .navbar-nav>li>a:hover, .navbar-inverse .navbar-nav>li>a:focus {
+    color: #18bc9c;
+}
+
+.navbar-inverse .navbar-brand:hover, .navbar-inverse .navbar-brand:focus {
+    color: #18bc9c;
+}
+
+.dropdown-menu>li>a:focus, .dropdown-menu>li>a:hover {
+    color: #4d4d4d;
+}
+
+.panel-success>.panel-heading {
+    color: #000000;
+}
+
+.btn-default {
+    color: #000000;
+}
+
+.btn {
+    padding: 3px 13px;
+}
+
+.alert {
+    color: #000000;
+}
+/* End modifications for Flatly theme */
